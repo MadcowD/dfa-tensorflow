@@ -2,7 +2,7 @@
 Tensorflow implementation of direct feedback alignement.
 Author: William H. Guss.
 """
-
+import operator
 import tensorflow as tf
 from functools import reduce
 
@@ -12,7 +12,7 @@ def get_num_nodes_respect_batch(tensor_shape):
     
 def random_matrix(shape):
     with tf.variable_scope("radom_matrix"):
-        rand_t = tf.random_uniform(shape, -1, 1):
+        rand_t = tf.random_uniform(shape, -1, 1)
         return tf.Variable(rand_t, name="weights")
 
 def flatten_respect_batch(tensor):
@@ -42,6 +42,7 @@ def reshape_respect_batch(tensor, out_shape_no_batch_list):
     Returns the reshaped tensor
     """
     with tf.variable_scope("reshape_respect_batch"):
+        tensor_shape = tensor.get_shape()
         shape_start_index = 1 if tensor_shape.as_list()[0] is None else 0
 
         # Flatten the tensor respecting the shape.
@@ -76,18 +77,23 @@ def direct_feedback_alignement(optimizer, loss, output, activation_param_pairs):
         # Construct direct feedback for each layer
         for i, (layer_out, layer_weights) in enumerate(activation_param_pairs):
             with tf.variable_scope("virtual_feedback_{}".format(i)):
-                # Flatten the layer (this is naiive with respect to convolutions.)
-                flat_layer, layer_shape = flatten_respect_batch(layer_out)
-                layer_num_nodes = layer_shape[-1]
+                if layer_out is output:
+                    proj_out = output
+                else:
+                    # Flatten the layer (this is naiive with respect to convolutions.)
+                    flat_layer, layer_shape = flatten_respect_batch(layer_out)
+                    layer_num_nodes = layer_shape[-1]
 
-                # First make random matrices to virutally connect each layer with the output.
-                rand_projection = random_matrix([out_num_nodes, layer_num_nodes])
-                flat_proj_out = tf.matmul(rand_projection, flat_layer)
+                    # First make random matrices to virutally connect each layer with the output.
+                    rand_projection = random_matrix([layer_num_nodes, out_num_nodes])
+                    flat_proj_out = tf.matmul(flat_layer, rand_projection)
 
-                # Reshape back to output dimensions and then get the gradients.
-                proj_out  = reshape_respect_batch(flat_proj_out, out_non_batch_shape)
-                virtual_gradient_param_pairs +=  [
-                    (tf.gradients(proj_out, layer_weights, grad_ys=loss_grad), layer_weights)]
+                    # Reshape back to output dimensions and then get the gradients.
+                    proj_out  = reshape_respect_batch(flat_proj_out, out_non_batch_shape)
+                for weight in layer_weights:
+                    print(loss_grad, proj_out)
+                    virtual_gradient_param_pairs +=  [
+                        (tf.gradients(proj_out, weight, grad_ys=loss_grad)[0], weight)]
 
         train_op = optimizer.apply_gradients(virtual_gradient_param_pairs)
         return train_op 
